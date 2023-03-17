@@ -121,15 +121,23 @@ class Vae:
         # ------------ Out -----------------------
         self.outputs_y = self.decoder(self.encoder(self.inputs_x)[2])
         self.vae = Model(self.inputs_x, self.outputs_y, name='VAE')
+
+        # FIXME Move loss to separate file
+        self.vae.add_loss(
+            self.get_loss(
+                inputs_x=self.inputs_x,
+                outputs_y=self.outputs_y,
+                latent_z=self.latent_z,
+                latent_z_mean=self.latent_z_mean, 
+                latent_z_log_sigma=self.latent_z_log_sigma)
+        )
     
     def compile(self):
         if self.optimizer == 'adamax':
             opt = optimizers.Adamax(learning_rate=self.learning_rate, beta_1=self.beta_1, beta_2=self.beta_2)
         else:
             raise ValueError
-        loss = self.get_loss(self.inputs_x, self.outputs_y, self.latent_z,
-                    self.latent_z_mean, self.latent_z_log_sigma)
-        self.vae.compile(optimizer=opt, loss=loss, weighted_metrics=[])
+        self.vae.compile(optimizer=opt, weighted_metrics=[])
     
     def predict(self, arr=None):
         if arr is None:
@@ -222,5 +230,5 @@ def compute_kernel(x, y):
 
 def get_mean_squared_error_loss(input_x, output_y):
     """ https://github.com/CancerAI-CL/IntegrativeVAEs/blob/master/code/models/common.py """
-    # weights = output_y[0:1, :-1]
-    return K.sum(K.square(input_x - output_y[:, 1:]), axis=1)
+    weights = output_y[:, 0]
+    return weights * K.sum(K.square(input_x - output_y[:, 1:]), axis=1)
