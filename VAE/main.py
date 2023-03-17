@@ -8,24 +8,16 @@ from tensorflow.keras import optimizers
 class Vae:
     def __init__(self, input_data_np=None,
         train_data=None, val_data=None,
-        train_y=None, val_y=None,
         seed=42, batch_normalization=False,
         optimizer='adamax', learning_rate=0.0005, beta_1=0.9, beta_2=0.999,
-        train_percent=75, sample_method='normal', regularization_weight=1):
+        train_percent=75, sample_method='normal', regularization_weight=1, **kwargs):
 
         self.seed = seed
         self.learning_rate = learning_rate
         self.input_data_np = input_data_np
         self.train_data = train_data
         self.val_data = val_data
-        if train_y is None:
-            self.train_y = np.concatenate([np.ones(shape=train_data.shape[0]).reshape(-1, 1), train_data], axis=1)
-        else:
-            self.train_y = train_y
-        if val_y is None:
-            self.val_y = np.concatenate([np.ones(shape=val_data.shape[0]).reshape(-1, 1), val_data], axis=1)
-        else:
-            self.val_y = val_y
+        self.kwargs = kwargs
         self.batch_normalization = batch_normalization
         self.sample_method = sample_method
 
@@ -113,7 +105,7 @@ class Vae:
         self.decoding = self.add_layer(num_nodes2, self.decoding, activation2)
         self.decoding = self.add_layer(num_nodes1, self.decoding, activation1)
         # add last layer
-        self.decoding = self.add_layer(self.input_size + 1, self.decoding, output_activation_fn)
+        self.decoding = self.add_layer(self.input_size, self.decoding, output_activation_fn)
         # Initialise the decoder
         self.decoder = Model(self.latent_inputs, self.decoding, name='decoder')
         print(self.decoder.summary())
@@ -121,15 +113,19 @@ class Vae:
         # ------------ Out -----------------------
         self.outputs_y = self.decoder(self.encoder(self.inputs_x)[2])
         self.vae = Model(self.inputs_x, self.outputs_y, name='VAE')
+
+        # FIXME Move loss to separate file
+        self.vae.add_loss(
+            self.get_loss(self.inputs_x, self.outputs_y, self.latent_z,
+                    self.latent_z_mean, self.latent_z_log_sigma)
+        )
     
     def compile(self):
         if self.optimizer == 'adamax':
             opt = optimizers.Adamax(learning_rate=self.learning_rate, beta_1=self.beta_1, beta_2=self.beta_2)
         else:
             raise ValueError
-        loss = self.get_loss(self.inputs_x, self.outputs_y, self.latent_z,
-                    self.latent_z_mean, self.latent_z_log_sigma)
-        self.vae.compile(optimizer=opt, loss=loss, weighted_metrics=[])
+        self.vae.compile(optimizer=opt, weighted_metrics=[])
     
     def predict(self, arr=None):
         if arr is None:
@@ -146,25 +142,27 @@ class Vae:
         self.train_data = self.input_data_np[training_idx, :]
 
 
-    def fit(self, patience=3, **kwargs):
+    def fit(self, epochs=10, batch_size=50, patience=3):
         if self.vae is None:
             self.build_model()
             self.compile()
         if patience > 0:
             callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=patience)
-            self.vae.fit(x=self.train_data, 
-                            y=self.train_y,
+            self.vae.fit(x=self.train_data, y=None,
+                            epochs=epochs,
+                            batch_size=batch_size,
                             shuffle=True,
-                            validation_data=(self.val_data, self.val_y),
+                            validation_data=self.val_data,
                             callbacks=[callback],
-                            **kwargs
+                            **self.kwargs
                         )
         else:
-            self.vae.fit(x=self.train_data,
-                y=self.train_y,
+            self.vae.fit(self.train_data, None,
+                epochs=epochs,
+                batch_size=batch_size,
                 shuffle=True,
-                validation_data=(self.val_data, self.val_y),
-                **kwargs
+                validation_data=self.val_data,
+                **self.kwargs
             )
 
     def get_loss(self, inputs_x, outputs_y, latent_z, latent_z_mean, latent_z_log_sigma):
@@ -222,5 +220,4 @@ def compute_kernel(x, y):
 
 def get_mean_squared_error_loss(input_x, output_y):
     """ https://github.com/CancerAI-CL/IntegrativeVAEs/blob/master/code/models/common.py """
-    # weights = output_y[0:1, :-1]
-    return K.sum(K.square(input_x - output_y[:, 1:]), axis=1)
+    return K.sum(K.square(input_x - output_y), axis=1)
